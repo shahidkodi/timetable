@@ -1,0 +1,48 @@
+import React, { useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App.jsx";
+import { supabase, supabaseReady } from "./supabaseClient";
+
+const sans = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif";
+
+function Login() {
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true); setErr("");
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw });
+    if (error) setErr(error.message);
+    setBusy(false);
+  };
+  return (
+    <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "linear-gradient(120deg,#0a4f55,#0e6b73)", fontFamily: sans }}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: 30, width: 360, maxWidth: "90vw", boxShadow: "0 18px 50px rgba(0,0,0,.25)" }}>
+        <div style={{ width: 46, height: 46, borderRadius: 12, background: "#0e6b73", color: "#fff", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 18, marginBottom: 16 }}>TT</div>
+        <h1 style={{ margin: "0 0 4px", fontSize: 20, color: "#16213a" }}>Timetable Manager</h1>
+        <p style={{ margin: "0 0 20px", fontSize: 13, color: "#647189" }}>Sign in with your staff account.</p>
+        {!supabaseReady && <p style={{ color: "#d64545", fontSize: 12.5 }}>Supabase isn't configured yet — set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.</p>}
+        <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} style={inp} />
+        <input placeholder="Password" type="password" value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} style={inp} />
+        {err && <div style={{ color: "#d64545", fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
+        <button onClick={submit} disabled={busy} style={{ width: "100%", border: "none", background: "#0e6b73", color: "#fff", padding: "11px", borderRadius: 9, fontSize: 14, fontWeight: 700, cursor: "pointer", opacity: busy ? 0.6 : 1 }}>{busy ? "Signing in…" : "Sign in"}</button>
+      </div>
+    </div>
+  );
+}
+const inp = { width: "100%", boxSizing: "border-box", border: "1px solid #e4e8ef", borderRadius: 9, padding: "11px 12px", fontSize: 14, marginBottom: 12, fontFamily: sans };
+
+function Root() {
+  const [session, setSession] = useState(undefined);
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+  if (session === undefined) return <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", fontFamily: sans, color: "#647189" }}>Loading…</div>;
+  if (!session && supabaseReady) return <Login />;
+  return <App />;
+}
+
+createRoot(document.getElementById("root")).render(<Root />);
