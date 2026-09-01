@@ -226,6 +226,8 @@ export default function App() {
   useEffect(() => { (async () => { try { const r = await window.storage.get("tt_theme"); if (r && r.value) setTheme(r.value); } catch {} })(); }, []);
   const persistTheme = (name) => { setTheme(name); setMenuOpen(false); try { window.storage.set("tt_theme", name); } catch {} };
   const TH = THEMES[theme] || THEMES.teal;
+  const canSignOut = (typeof supabase !== "undefined");
+  const handleSignOut = () => { try { supabase.auth.signOut(); } catch {} };
 
   useEffect(() => {
     let alive = true;
@@ -393,7 +395,7 @@ export default function App() {
           <span style={{ color: C.sub, fontWeight: 600 }}>Section: </span>{(TABS.find((t) => t[0] === view) || ["", ""])[1]}
         </div>
       )}
-      <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} view={view} setView={setView} TH={TH} school={cfg.school} theme={theme} setTheme={persistTheme} />
+      <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} view={view} setView={setView} TH={TH} school={cfg.school} theme={theme} setTheme={persistTheme} onSignOut={canSignOut ? handleSignOut : null} />
       <main style={{ display: "flex", alignItems: "flex-start", flexDirection: mobile ? "column" : "row" }}>
         {!mobile && (view === "classes" || view === "edit" || view === "bkey") && (
           <Sidebar title="Classes" items={cfg.classes} sel={safeCls} onSel={setCls} sub={(x) => "CT " + (cfg.classTeacher[x] || "—")} />
@@ -572,7 +574,7 @@ function MobilePicker({ label, items, value, onChange }) {
   );
 }
 
-function NavDrawer({ open, onClose, view, setView, TH, school, theme, setTheme }) {
+function NavDrawer({ open, onClose, view, setView, TH, school, theme, setTheme, onSignOut }) {
   if (!open) return null;
   return (
     <div onClick={onClose} className="tt-noprint" style={{ position: "fixed", inset: 0, background: "rgba(16,25,40,.45)", zIndex: 90 }}>
@@ -589,6 +591,14 @@ function NavDrawer({ open, onClose, view, setView, TH, school, theme, setTheme }
             <div key={k} onClick={() => { setView(k); onClose(); }} style={{ padding: "13px 20px", fontSize: 14.5, fontWeight: view === k ? 700 : 500, color: view === k ? TH.accent : C.ink, background: view === k ? `${TH.accent}14` : "transparent", borderLeft: view === k ? `4px solid ${TH.accent}` : "4px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}><Icon name={k} size={18} />{label}</div>
           ))}
         </div>
+        {onSignOut && (
+          <div style={{ borderTop: `1px solid ${C.line}`, padding: "12px 18px" }}>
+            <button className="tt-btn" onClick={() => { onSignOut(); onClose(); }} style={{ width: "100%", border: `1px solid ${C.line}`, background: "#fff", color: C.clash, padding: "10px", borderRadius: 9, fontSize: 13.5, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" /></svg>
+              Sign out
+            </button>
+          </div>
+        )}
         <div style={{ borderTop: `1px solid ${C.line}`, padding: "14px 18px" }}>
           <div style={{ fontSize: 11, color: C.sub, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>Theme</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
