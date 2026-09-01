@@ -97,16 +97,15 @@ function autoSchedule(cfg, mode = "all", onlyClass = null) {
       }
     };
     if (mode !== "all") seedExisting(onlyClass);
-    if (mode === "all") {
-      for (const key in (cfg.locked || {})) {
-        if (!cfg.locked[key]) continue;
-        const parts = key.split("|"); const c = parts[0], day = parts[1], p = +parts[2];
-        const di = cfg.days.indexOf(day); if (di < 0 || !cfg.grid[c]) continue;
-        const slot = cfg.grid[c][day] && cfg.grid[c][day][p];
-        if (slot && slot[0]) { grid[c][di][p] = [slot[0], slot[1]]; tOf(slot[0]).forEach((t) => tbusy[di][p].add(t)); mark(c, slot[1], di, p); }
-      }
+    const frozen = new Set();
+    for (const key in (cfg.locked || {})) {
+      if (!cfg.locked[key]) continue;
+      const parts = key.split("|"); const c = parts[0], day = parts[1], p = +parts[2];
+      const di = cfg.days.indexOf(day); if (di < 0 || !cfg.grid[c]) continue;
+      frozen.add(c + "|" + di + "|" + p);
+      if (mode === "all") { const slot = cfg.grid[c][day] && cfg.grid[c][day][p]; if (slot && slot[0]) { grid[c][di][p] = [slot[0], slot[1]]; tOf(slot[0]).forEach((t) => tbusy[di][p].add(t)); mark(c, slot[1], di, p); } }
     }
-    const free = (c, d, p) => !grid[c][d][p][0];
+    const free = (c, d, p) => !grid[c][d][p][0] && !frozen.has(c + "|" + d + "|" + p);
     const tFree = (toks, d, p) => toks.every((t) => !tbusy[d][p].has(t));
     const book = (c, d, p, code, sub) => { grid[c][d][p] = [code, sub]; tOf(code).forEach((t) => tbusy[d][p].add(t)); mark(c, sub, d, p); };
     const okSoft = (c, sub, d, p) => { const lim = twiceOK(c, sub) ? 2 : 1; if ((subDay[`${c}|${sub}|${d}`] || 0) >= lim) return false; if (R(sub).distinct && subPer[`${c}|${sub}|${p}`]) return false; return true; };
@@ -125,7 +124,7 @@ function autoSchedule(cfg, mode = "all", onlyClass = null) {
       for (const c of list) {
         const cr = CR[c]; if (!cr) continue;
         for (const pStr of Object.keys(cr)) {
-          const p = +pStr; const res = resolveRule(c, cr[pStr]); if (!res) continue; const toks = tOf(res.teacher);
+          const p = (+pStr) - 1; if (p < 0 || p >= P) continue; const res = resolveRule(c, cr[pStr]); if (!res) continue; const toks = tOf(res.teacher);
           for (let d = 0; d < D; d++) {
             let placed = 0; for (let dd = 0; dd < D; dd++) for (let pp = 0; pp < P; pp++) if (grid[c][dd][pp][0] === res.teacher && grid[c][dd][pp][1] === res.sub) placed++;
             if (placed >= pf(c, res.sub)) break;
@@ -848,6 +847,24 @@ function TeacherLoad({ cfg, teacherLoad }) {
 function EditView({ cfg, cls, update, expand, clashTokens, occupancy, ask }) {
   const keys = cfg.bkey[cls] || [];
   const [report, setReport] = useState("");
+  const [fzDay, setFzDay] = useState(cfg.days[0]);
+  const [fzPer, setFzPer] = useState(1);
+  const freezeAll = (on) => update((n) => { const pi = fzPer - 1; for (const c of n.classes) { const k = `${c}|${fzDay}|${pi}`; if (on) n.locked[k] = true; else delete n.locked[k]; } });
+  const [caSub, setCaSub] = useState(cfg.subjects[0]);
+  const [caLock, setCaLock] = useState(true);
+  const assignAll = () => {
+    const pi = fzPer - 1;
+    update((n) => {
+      for (const c of n.classes) {
+        const row = (n.bkey[c] || []).find((r) => r.sub === caSub);
+        const teacher = row ? row.teacher : caSub;
+        n.grid[c][fzDay][pi] = [teacher, caSub];
+        if (caLock) n.locked[`${c}|${fzDay}|${pi}`] = true;
+      }
+    });
+    setReport(`Assigned ${caSub} to ${DAY_FULL[fzDay]} P${fzPer} for all ${cfg.classes.length} classes${caLock ? " and locked it" : ""}.`);
+  };
+  const clearSlotAll = () => update((n) => { const pi = fzPer - 1; for (const c of n.classes) { n.grid[c][fzDay][pi] = [null, null]; delete n.locked[`${c}|${fzDay}|${pi}`]; } });
   const optKey = (r) => `${r.teacher}||${r.sub}`;
 
   const genAll = () => ask("Auto-generate a fresh, clash-free timetable for the whole school from the B-Key? This replaces every current assignment.", () => {
@@ -884,7 +901,24 @@ function EditView({ cfg, cls, update, expand, clashTokens, occupancy, ask }) {
         <button className="tt-btn" onClick={genAll} style={solidBtn}>Auto-generate all</button>
       </>} />
       {report && <Banner tone="primary">{report}</Banner>}
-      <Banner tone="warn">Tap the 🔓 on any slot to lock it. Locked slots are kept exactly as they are when you Auto-generate. Use “Clear all” to start blank.</Banner>
+      <Banner tone="warn">Tap the 🔓 on any slot to lock it. Locked slots (filled or empty) are kept exactly as they are when you Auto-generate — an empty locked slot stays blank (frozen for assembly, activities, etc.). Use “Clear all” to start blank.</Banner>
+      <div style={{ ...card, marginBottom: 14, padding: 12, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: C.sub }}>Freeze a slot for ALL classes:</span>
+        <select className="tt-sel" style={{ width: 130 }} value={fzDay} onChange={(e) => setFzDay(e.target.value)}>{cfg.days.map((d) => <option key={d} value={d}>{DAY_FULL[d]}</option>)}</select>
+        <select className="tt-sel" style={{ width: 80 }} value={fzPer} onChange={(e) => setFzPer(+e.target.value)}>{cfg.periods.map((p) => <option key={p} value={p}>P{p}</option>)}</select>
+        <button className="tt-btn" onClick={() => freezeAll(true)} style={solidBtn}>Freeze</button>
+        <button className="tt-btn" onClick={() => freezeAll(false)} style={ghostBtn}>Unfreeze</button>
+      </div>
+      <div style={{ ...card, marginBottom: 14, padding: 12, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: C.sub }}>Assign a subject to ALL classes at</span>
+        <select className="tt-sel" style={{ width: 130 }} value={fzDay} onChange={(e) => setFzDay(e.target.value)}>{cfg.days.map((d) => <option key={d} value={d}>{DAY_FULL[d]}</option>)}</select>
+        <select className="tt-sel" style={{ width: 80 }} value={fzPer} onChange={(e) => setFzPer(+e.target.value)}>{cfg.periods.map((p) => <option key={p} value={p}>P{p}</option>)}</select>
+        <span style={{ fontSize: 12.5, color: C.sub }}>subject</span>
+        <select className="tt-sel" style={{ width: 110 }} value={caSub} onChange={(e) => setCaSub(e.target.value)}>{cfg.subjects.map((su) => <option key={su}>{su}</option>)}</select>
+        <label style={{ fontSize: 12, color: C.sub, display: "inline-flex", alignItems: "center", gap: 5 }}><input type="checkbox" checked={caLock} onChange={(e) => setCaLock(e.target.checked)} /> lock it</label>
+        <button className="tt-btn" onClick={assignAll} style={solidBtn}>Assign to all</button>
+        <button className="tt-btn" onClick={clearSlotAll} style={{ ...ghostBtn, color: C.clash }}>Clear this slot (all)</button>
+      </div>
       {keys.length === 0 && <Banner tone="warn">No B-Key set for {cls} yet. Add subjects in the “B-Key & teacher load” tab first.</Banner>}
 
       <div style={{ ...card, overflowX: "auto" }}>
@@ -1056,6 +1090,8 @@ function ClassRulesPanel({ cfg, update }) {
     else { const [, sub, teacher] = val.split("|"); n.classRules[cls][p] = { kind: "pair", sub, teacher }; }
     if (Object.keys(n.classRules[cls]).length === 0) delete n.classRules[cls];
   });
+  const applyCTAll = () => update((n) => { for (const c of n.classes) { (n.classRules[c] ||= {}); n.classRules[c][1] = { kind: "ct" }; } });
+  const clearCTAll = () => update((n) => { for (const c of n.classes) if (n.classRules[c]) { delete n.classRules[c][1]; if (Object.keys(n.classRules[c]).length === 0) delete n.classRules[c]; } });
 
   return (
     <div style={{ ...card, marginTop: 16 }}>
@@ -1065,6 +1101,10 @@ function ClassRulesPanel({ cfg, update }) {
           <select className="tt-sel" style={{ width: 100, display: "inline-block" }} value={cls} onChange={(e) => setC(e.target.value)}>{cfg.classes.map((x) => <option key={x}>{x}</option>)}</select>
         </label>
         <span style={{ fontSize: 12, color: C.sub }}>Class teacher: <b style={{ fontFamily: mono, color: C.ink }}>{ct || "—"}</b>{ctRow ? ` (${ctRow.sub})` : ""}</span>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "10px 14px", borderBottom: `1px solid ${C.line}` }}>
+        <button className="tt-btn" onClick={applyCTAll} style={solidBtn}>Set P1 = class teacher for ALL classes</button>
+        <button className="tt-btn" onClick={clearCTAll} style={ghostBtn}>Clear P1 rule (all)</button>
       </div>
       <div style={{ padding: 14, display: "grid", gap: 8 }}>
         {cfg.periods.map((p) => (
