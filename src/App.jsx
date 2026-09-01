@@ -108,6 +108,7 @@ function autoSchedule(cfg, mode = "all", onlyClass = null) {
     const free = (c, d, p) => !grid[c][d][p][0] && !frozen.has(c + "|" + d + "|" + p);
     const tFree = (toks, d, p) => toks.every((t) => !tbusy[d][p].has(t));
     const book = (c, d, p, code, sub) => { grid[c][d][p] = [code, sub]; tOf(code).forEach((t) => tbusy[d][p].add(t)); mark(c, sub, d, p); };
+    const unbook = (c, d, p) => { const cur = grid[c][d][p]; const code = cur[0], sub = cur[1]; if (!code) return; tOf(code).forEach((t) => tbusy[d][p].delete(t)); if (subDay[`${c}|${sub}|${d}`]) subDay[`${c}|${sub}|${d}`]--; if (subPer[`${c}|${sub}|${p}`]) subPer[`${c}|${sub}|${p}`]--; grid[c][d][p] = [null, null]; };
     const okSoft = (c, sub, d, p) => { const lim = twiceOK(c, sub) ? 2 : 1; if ((subDay[`${c}|${sub}|${d}`] || 0) >= lim) return false; if (R(sub).distinct && subPer[`${c}|${sub}|${p}`]) return false; return true; };
     const slots = () => { const s = []; for (let d = 0; d < D; d++) for (let p = 0; p < P; p++) s.push([d, p]); return s; };
     let unplaced = 0;
@@ -135,15 +136,24 @@ function autoSchedule(cfg, mode = "all", onlyClass = null) {
     };
     placeFixed(mode === "all" ? cfg.classes : [onlyClass]);
 
-    if (mode === "all") {
-      for (const s of shuf([...(cfg.combined || [])], r)) {
-        const need = pf(s.divisions[0] || cfg.classes[0], s.sub); const toks = s.teachers.filter((t) => singles.has(t));
-        let placed = 0; const used = new Set(); const cand = shuf(slots(), r).filter(([, p]) => allowed(s.sub, p));
-        cand.sort((a, b) => (used.has(a[0]) ? 1 : 0) - (used.has(b[0]) ? 1 : 0));
-        for (const [d, p] of cand) { if (placed >= need) break; if (used.has(d)) continue; if (s.divisions.every((c) => free(c, d, p) && okSoft(c, s.sub, d, p)) && tFree(toks, d, p)) { s.divisions.forEach((c) => book(c, d, p, s.name, s.sub)); placed++; used.add(d); } }
-        for (const [d, p] of cand) { if (placed >= need) break; if (s.divisions.every((c) => free(c, d, p)) && tFree(toks, d, p)) { s.divisions.forEach((c) => book(c, d, p, s.name, s.sub)); placed++; } }
-        unplaced += Math.max(0, need - placed) * Math.max(1, s.divisions.length);
+    if (mode === "all" && (cfg.combined || []).length) {
+      // Parallel language block: place EVERY language session at the SAME period-slots, so the
+      // shared language teachers each teach one pooled group per slot (not serialised across the week).
+      const need = Math.max(...cfg.combined.map((sx) => pf(sx.divisions[0] || cfg.classes[0], sx.sub)));
+      const combT = new Set(); cfg.combined.forEach((sx) => sx.teachers.forEach((t) => singles.has(t) && combT.add(t)));
+      const combSub = cfg.combined[0].sub;
+      let placed = 0; const usedD = new Set();
+      for (const d of shuf([...Array(D).keys()], r)) {
+        if (placed >= need) break; if (usedD.has(d)) continue;
+        for (const p of shuf([...Array(P).keys()], r)) {
+          if (!allowed(combSub, p)) continue;
+          let ok = true;
+          for (const t of combT) if (tbusy[d][p].has(t)) { ok = false; break; }
+          if (ok) for (const sx of cfg.combined) { for (const c of sx.divisions) if (!free(c, d, p) || !okSoft(c, sx.sub, d, p)) { ok = false; break; } if (!ok) break; }
+          if (ok) { for (const sx of cfg.combined) for (const c of sx.divisions) book(c, d, p, sx.name, sx.sub); placed++; usedD.add(d); break; }
+        }
       }
+      unplaced += Math.max(0, need - placed) * cfg.combined.reduce((a, sx) => a + sx.divisions.length, 0);
     }
 
     const targets = mode === "class" ? [onlyClass] : cfg.classes;
@@ -156,6 +166,7 @@ function autoSchedule(cfg, mode = "all", onlyClass = null) {
     const load = {}; lessons.forEach((l) => tOf(l.teacher).forEach((t) => (load[t] = (load[t] || 0) + 1)));
     lessons = shuf(lessons, r);
     lessons.sort((a, b) => { const pa = R(a.sub).pin ? 0 : 1, pb = R(b.sub).pin ? 0 : 1; if (pa !== pb) return pa - pb; return Math.max(...tOf(b.teacher).map((t) => load[t] || 0)) - Math.max(...tOf(a.teacher).map((t) => load[t] || 0)); });
+    const unplacedList = [];
     for (const l of lessons) {
       const toks = tOf(l.teacher); const band = R(l.sub).band;
       let cand = shuf(slots(), r).filter(([, p]) => allowed(l.sub, p));
@@ -163,8 +174,33 @@ function autoSchedule(cfg, mode = "all", onlyClass = null) {
       let done = false;
       for (const [d, p] of cand) if (free(l.c, d, p) && tFree(toks, d, p) && okSoft(l.c, l.sub, d, p)) { book(l.c, d, p, l.teacher, l.sub); done = true; break; }
       if (!done) { const lim = twiceOK(l.c, l.sub) ? 2 : 1; for (const [d, p] of cand) if (free(l.c, d, p) && tFree(toks, d, p) && (subDay[`${l.c}|${l.sub}|${d}`] || 0) < lim) { book(l.c, d, p, l.teacher, l.sub); done = true; break; } }
-      if (!done) unplaced++;
+      if (!done) unplacedList.push(l);
     }
+    // auto-relocation repair: resolve any unplaced lesson by borrowing a slot (first periods first)
+    // and moving the movable occupant (e.g. a class teacher's P1 period) to another free slot.
+    let remaining = unplacedList;
+    for (let pass = 0; pass < 2; pass++) {
+    const stillRem = [];
+    for (const l of remaining) {
+      const toks = tOf(l.teacher); let fixed = false;
+      const cand = shuf(slots(), r).filter(([, p]) => allowed(l.sub, p));
+      cand.sort((a, b) => a[1] - b[1]);
+      for (const [d, p] of cand) {
+        if (!tFree(toks, d, p)) continue;
+        if (free(l.c, d, p)) { if (okSoft(l.c, l.sub, d, p)) { book(l.c, d, p, l.teacher, l.sub); fixed = true; break; } continue; }
+        const occ = grid[l.c][d][p]; if (isC(occ[0])) continue;
+        const oc = occ[0], os = occ[1], otoks = tOf(oc);
+        unbook(l.c, d, p);
+        let moved = null;
+        for (const [d2, p2] of shuf(slots(), r)) { if (d2 === d && p2 === p) continue; if (allowed(os, p2) && free(l.c, d2, p2) && tFree(otoks, d2, p2) && okSoft(l.c, os, d2, p2)) { book(l.c, d2, p2, oc, os); moved = [d2, p2]; break; } }
+        if (moved && free(l.c, d, p) && tFree(toks, d, p) && okSoft(l.c, l.sub, d, p)) { book(l.c, d, p, l.teacher, l.sub); fixed = true; break; }
+        else { if (moved) unbook(l.c, moved[0], moved[1]); book(l.c, d, p, oc, os); }
+      }
+      if (!fixed) stillRem.push(l);
+    }
+    remaining = stillRem;
+    }
+    unplaced += remaining.length;
     const out = {}; for (const c of cfg.classes) { out[c] = {}; cfg.days.forEach((day, d) => (out[c][day] = grid[c][d])); }
     return { grid: out, unplaced };
   };
@@ -1223,7 +1259,7 @@ ${buildContext(cfg, teacherLoad)}`;
 }
 
 /* ---------------- Language (combined) sessions ---------------- */
-function CombinedView({ cfg, update, ask, mobile }) {
+function CombinedView({ cfg, update, ask, mobile, occupancy }) {
   const sessions = cfg.combined || [];
   const [sel, setSel] = useState(0);
   const i = Math.min(sel, Math.max(0, sessions.length - 1));
@@ -1252,6 +1288,14 @@ function CombinedView({ cfg, update, ask, mobile }) {
     const ses = n.combined[i]; const on = ses.divisions.every((c) => n.grid[c]?.[d]?.[p]?.[0] === ses.name);
     for (const c of ses.divisions) { if (!n.grid[c]) continue; n.grid[c][d][p] = on ? [null, null] : [ses.name, ses.sub]; }
   });
+  // detection: a member teacher already teaching a REGULAR class in this slot = real clash
+  const teacherClashAt = (d, p) => {
+    if (!s) return null;
+    for (const t of s.teachers) { const e = occupancy?.[d]?.[p]?.tok?.get(t); if (e && e.norm && e.norm.size > 0) return t; }
+    return null;
+  };
+  // a member division already has a different subject in this slot (would be overwritten)
+  const overwriteAt = (d, p) => s ? s.divisions.filter((c) => { const cell = cfg.grid[c]?.[d]?.[p]; return cell && cell[0] && cell[0] !== s.name; }) : [];
 
   return (
     <div>
@@ -1295,8 +1339,16 @@ function CombinedView({ cfg, update, ask, mobile }) {
                       <tr key={p}><td style={perTd}>{p}</td>
                         {cfg.days.map((d) => {
                           const on = scheduledAt(d, pi);
-                          return <td key={d} onClick={() => toggleSlot(d, pi)} style={{ ...cellTd, height: 40, cursor: "pointer", background: on ? C.accentSoft : "#fff", boxShadow: on ? `inset 0 0 0 2px ${C.accent}` : "none" }}>
-                            {on ? <span style={{ color: C.accent, fontWeight: 700, fontSize: 11 }}>running</span> : <span style={{ color: "#cfcdc6", fontSize: 16 }}>+</span>}
+                          const clashT = teacherClashAt(d, pi);
+                          const ow = overwriteAt(d, pi);
+                          const border = clashT ? C.clash : on ? C.accent : ow.length ? C.warn : null;
+                          const bg = clashT ? C.clashSoft : on ? C.accentSoft : ow.length ? C.warnSoft : "#fff";
+                          const title = clashT ? `Clash: ${clashT} is already teaching a class this period` : ow.length ? `Would overwrite ${ow.join(", ")}` : on ? "Running — click to remove" : "Click to place the block here";
+                          return <td key={d} onClick={() => toggleSlot(d, pi)} title={title} style={{ ...cellTd, height: 40, cursor: "pointer", background: bg, boxShadow: border ? `inset 0 0 0 2px ${border}` : "none" }}>
+                            {clashT ? <span style={{ color: C.clash, fontWeight: 700, fontSize: 11 }}>⚠ {clashT}</span>
+                              : on ? <span style={{ color: C.accent, fontWeight: 700, fontSize: 11 }}>running</span>
+                              : ow.length ? <span style={{ color: C.warn, fontWeight: 700, fontSize: 13 }}>+</span>
+                              : <span style={{ color: "#cfcdc6", fontSize: 16 }}>+</span>}
                           </td>;
                         })}
                       </tr>
@@ -1304,7 +1356,7 @@ function CombinedView({ cfg, update, ask, mobile }) {
                   </tbody>
                 </table>
               </div>
-              <div style={{ padding: "0 14px 12px", fontSize: 12, color: C.sub }}>A slot shows “running” only when all {s.divisions.length} member division{s.divisions.length === 1 ? "" : "s"} have it at that time. Placing overwrites whatever those divisions had in that slot.</div>
+              <div style={{ padding: "0 14px 12px", fontSize: 12, color: C.sub, lineHeight: 1.6 }}>“running” = placed for all {s.divisions.length} member division{s.divisions.length === 1 ? "" : "s"}. A <b style={{ color: C.clash }}>⚠ red</b> slot means one of this session’s teachers is already taking a regular class that period (a real clash) — avoid it. An <b style={{ color: C.warn }}>amber +</b> means placing will overwrite another subject in some division.</div>
             </div>
           </div>
         ) : <div style={{ ...card, padding: 24, color: C.sub }}>No language sessions yet. Create one to merge divisions for a parallel language period.</div>}
