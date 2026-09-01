@@ -226,8 +226,7 @@ export default function App() {
   useEffect(() => { (async () => { try { const r = await window.storage.get("tt_theme"); if (r && r.value) setTheme(r.value); } catch {} })(); }, []);
   const persistTheme = (name) => { setTheme(name); setMenuOpen(false); try { window.storage.set("tt_theme", name); } catch {} };
   const TH = THEMES[theme] || THEMES.teal;
-  const canSignOut = (typeof supabase !== "undefined");
-  const handleSignOut = () => { try { supabase.auth.signOut(); } catch {} };
+  const handleSignOut = () => { if (typeof supabase !== "undefined") { try { supabase.auth.signOut(); } catch {} } else { alert("Sign out works on your deployed app, which has staff login. This in-chat preview has no login to sign out of."); } };
 
   useEffect(() => {
     let alive = true;
@@ -395,7 +394,7 @@ export default function App() {
           <span style={{ color: C.sub, fontWeight: 600 }}>Section: </span>{(TABS.find((t) => t[0] === view) || ["", ""])[1]}
         </div>
       )}
-      <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} view={view} setView={setView} TH={TH} school={cfg.school} theme={theme} setTheme={persistTheme} onSignOut={canSignOut ? handleSignOut : null} />
+      <NavDrawer open={menuOpen} onClose={() => setMenuOpen(false)} view={view} setView={setView} TH={TH} school={cfg.school} theme={theme} setTheme={persistTheme} onSignOut={handleSignOut} />
       <main style={{ display: "flex", alignItems: "flex-start", flexDirection: mobile ? "column" : "row" }}>
         {!mobile && (view === "classes" || view === "edit" || view === "bkey") && (
           <Sidebar title="Classes" items={cfg.classes} sel={safeCls} onSel={setCls} sub={(x) => "CT " + (cfg.classTeacher[x] || "—")} />
