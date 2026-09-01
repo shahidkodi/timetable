@@ -1244,6 +1244,7 @@ function CombinedView({ cfg, update, ask, mobile }) {
     for (const c of n.classes) (n.bkey[c] || []).forEach((r) => { if (r.teacher === oldName) r.teacher = newName; });
   });
   const toggleArr = (field, val) => editS((x) => { const a = x[field]; const k = a.indexOf(val); k < 0 ? a.push(val) : a.splice(k, 1); });
+  const setArr = (field, arr) => editS((x) => { x[field] = arr.slice(); });
 
   // scheduling: a session is "at" (d,p) if every member division has it there
   const scheduledAt = (d, p) => s && s.divisions.length > 0 && s.divisions.every((c) => cfg.grid[c]?.[d]?.[p]?.[0] === s.name);
@@ -1279,8 +1280,8 @@ function CombinedView({ cfg, update, ask, mobile }) {
                 <button className="tt-btn" onClick={delSession} style={{ ...ghostBtn, marginLeft: "auto", color: C.clash }}>Remove session</button>
               </div>
               <div style={{ padding: 14, display: "grid", gap: 14 }}>
-                <ChipPicker label="Teachers in this session" all={cfg.singles} selected={s.teachers} onToggle={(v) => toggleArr("teachers", v)} />
-                <ChipPicker label="Divisions that merge for it" all={cfg.classes} selected={s.divisions} onToggle={(v) => toggleArr("divisions", v)} />
+                <ChipPicker label="Teachers in this session" all={cfg.singles} selected={s.teachers} onToggle={(v) => toggleArr("teachers", v)} onSetAll={(a) => setArr("teachers", a)} />
+                <ChipPicker label="Divisions that merge for it" all={cfg.classes} selected={s.divisions} onToggle={(v) => toggleArr("divisions", v)} onSetAll={(a) => setArr("divisions", a)} />
               </div>
             </div>
 
@@ -1312,14 +1313,23 @@ function CombinedView({ cfg, update, ask, mobile }) {
   );
 }
 
-function ChipPicker({ label, all, selected, onToggle }) {
+function ChipPicker({ label, all, selected, onToggle, onSetAll }) {
   const set = new Set(selected);
   return (
     <div>
-      <div style={{ fontSize: 11, color: C.sub, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>{label} · {selected.length}</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 150, overflowY: "auto" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 11, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5, fontWeight: 700 }}>{label} · {selected.length}</span>
+        {onSetAll && (
+          <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+            <button className="tt-btn" onClick={() => onSetAll(all)} style={{ border: "none", background: "transparent", color: C.primary, fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0 }}>Select all</button>
+            <span style={{ color: C.line }}>|</span>
+            <button className="tt-btn" onClick={() => onSetAll([])} style={{ border: "none", background: "transparent", color: C.clash, fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0 }}>Clear</button>
+          </span>
+        )}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {all.map((x) => { const on = set.has(x); return (
-          <button key={x} className="tt-btn" onClick={() => onToggle(x)} style={{ fontFamily: mono, fontSize: 12, fontWeight: 600, padding: "5px 10px", borderRadius: 7, border: `1px solid ${on ? C.primary : C.line}`, background: on ? C.primary : "#fff", color: on ? "#fff" : C.sub }}>{x}</button>
+          <button key={x} className="tt-btn" onClick={() => onToggle(x)} style={{ fontFamily: mono, fontSize: 12.5, fontWeight: 600, padding: "7px 11px", borderRadius: 7, border: `1px solid ${on ? C.primary : C.line}`, background: on ? C.primary : "#fff", color: on ? "#fff" : C.sub }}>{x}</button>
         ); })}
       </div>
     </div>
